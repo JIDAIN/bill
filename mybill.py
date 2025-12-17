@@ -9,7 +9,7 @@ from streamlit_javascript import st_javascript
 st.set_page_config(layout="wide", page_title="个人账单可视化仪表盘")
 
 # =====================
-# 设备识别
+# 设备判断
 # =====================
 screen_width = st_javascript("window.innerWidth", key="screen_width")
 is_mobile = screen_width is not None and screen_width < 768
@@ -19,10 +19,10 @@ st.caption("账单仅在当前会话内存中处理，不会上传或保存")
 st.divider()
 
 # =====================
-# 上传账单（方案 A）
+# 上传账单
 # =====================
 uploaded_file = st.file_uploader(
-    "📤 上传你的账单 Excel（仅当前会话使用）",
+    "📤 上传账单 Excel（仅当前会话）",
     type=["xlsx"]
 )
 
@@ -47,15 +47,23 @@ expense_df = df[df["收支类型"] == "支出"]
 all_years = sorted(df["年份"].unique())
 
 # =====================
-# 通用饼图函数
+# 饼图函数（修复版）
 # =====================
 def pie(data, col, mode, title):
     d = data.groupby(col)["金额_abs"].sum().reset_index()
     fig = px.pie(d, values="金额_abs", names=col, hole=0.4)
+
     if mode == "金额":
-        fig.update_traces(textinfo="label+value", texttemplate="%{value:.0f}")
+        fig.update_traces(
+            textinfo="label+value",
+            texttemplate="<b>%{label}</b><br>%{value:.0f}"
+        )
     else:
-        fig.update_traces(textinfo="label+percent")
+        fig.update_traces(
+            textinfo="label+percent",
+            texttemplate="<b>%{label}</b><br>%{percent}"
+        )
+
     fig.update_layout(title=title, title_x=0.5)
     return fig
 
@@ -64,10 +72,7 @@ def pie(data, col, mode, title):
 # ==================================================
 st.header("1️⃣ 收入 / 支出构成（按年）")
 
-if not is_mobile:
-    c1, c2 = st.columns(2)
-else:
-    c1 = c2 = st.container()
+c1, c2 = st.columns(2) if not is_mobile else (st.container(), st.container())
 
 with c1:
     st.subheader("💵 收入构成")
@@ -94,21 +99,15 @@ st.divider()
 # ==================================================
 st.header("2️⃣ 支出明细与标签分析")
 
-if not is_mobile:
-    c3, c4 = st.columns(2)
-else:
-    c3 = c4 = st.container()
+c3, c4 = st.columns(2) if not is_mobile else (st.container(), st.container())
 
 with c3:
     st.subheader("🔍 二级分类明细")
-    cat = st.selectbox("类别", expense_df["类别"].unique())
+    cat = st.selectbox("类别", expense_df["类别"].unique(), key="detail_cat")
     subs = expense_df[expense_df["类别"] == cat]["二级分类"].unique()
     sel = st.multiselect("二级分类", subs, default=list(subs))
     m = st.radio("显示方式  ", ["金额", "占比"], horizontal=True, key="detail_m")
-    d = expense_df[
-        (expense_df["类别"] == cat) &
-        (expense_df["二级分类"].isin(sel))
-    ]
+    d = expense_df[(expense_df["类别"] == cat) & (expense_df["二级分类"].isin(sel))]
     st.plotly_chart(pie(d, "二级分类", m, f"{cat} 支出明细"), use_container_width=True)
 
 with c4:
@@ -123,9 +122,16 @@ with c4:
 st.divider()
 
 # ==================================================
-# 第三部分：月度趋势
+# 第三部分：月度趋势（按年筛选）
 # ==================================================
 st.header("3️⃣ 月度支出趋势")
+
+trend_year = st.selectbox(
+    "选择年份（影响下方所有趋势图）",
+    all_years,
+    index=len(all_years)-1,
+    key="trend_year"
+)
 
 order = [
     "吃喝玩乐", "人情", "生活用品", "服饰美妆",
@@ -133,19 +139,32 @@ order = [
     "固定支出", "交通", "其他"
 ]
 
-for cat in order:
-    d = (
-        expense_df[expense_df["类别"] == cat]
-        .groupby("月份")["金额_abs"]
-        .sum()
-        .reset_index()
-    )
+filtered = expense_df[expense_df["年份"] == trend_year]
 
-    fig = px.line(
-        d, x="月份", y="金额_abs",
-        markers=True, text="金额_abs", title=cat
-    )
-    fig.update_traces(texttemplate="%{text:.0f}", textposition="top center")
-    st.plotly_chart(fig, use_container_width=True)
+for i in range(0, len(order), 2):
+    cols = st.columns(2) if not is_mobile else [st.container(), None]
+
+    for col, cat in zip(cols, order[i:i+2]):
+        if col is None:
+            continue
+
+        with col:
+            d = (
+                filtered[filtered["类别"] == cat]
+                .groupby("月份")["金额_abs"]
+                .sum()
+                .reset_index()
+            )
+
+            fig = px.line(
+                d, x="月份", y="金额_abs",
+                markers=True, text="金额_abs", title=cat
+            )
+            fig.update_traces(
+                texttemplate="%{text:.0f}",
+                textposition="top center",
+                line=dict(width=3)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 st.caption("🔐 安全模式 · 数据仅存在当前会话")
